@@ -2,8 +2,6 @@
 #include "../Compositor.hpp"
 #include "core/Output.hpp"
 
-#define LOGM PROTO::outputPower->protoLog
-
 COutputPower::COutputPower(SP<CZwlrOutputPowerV1> resource_, CMonitor* pMonitor_) : resource(resource_), pMonitor(pMonitor_) {
     if (!resource->resource())
         return;
@@ -17,7 +15,7 @@ COutputPower::COutputPower(SP<CZwlrOutputPowerV1> resource_, CMonitor* pMonitor_
 
         pMonitor->dpmsStatus = mode == ZWLR_OUTPUT_POWER_V1_MODE_ON;
 
-        wlr_output_state_set_enabled(pMonitor->state.wlr(), pMonitor->dpmsStatus);
+        pMonitor->output->state->setEnabled(mode == ZWLR_OUTPUT_POWER_V1_MODE_ON);
 
         if (!pMonitor->state.commit())
             LOGM(ERR, "Couldn't set dpms to {} for {}", pMonitor->dpmsStatus, pMonitor->szName);

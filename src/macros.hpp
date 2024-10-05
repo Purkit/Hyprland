@@ -27,6 +27,8 @@
 #define WORKSPACE_INVALID     -1L
 #define WORKSPACE_NOT_CHANGED -101
 
+#define MONITOR_INVALID -1L
+
 #define LISTENER(name)                                                                                                                                                             \
     void               listener_##name(wl_listener*, void*);                                                                                                                       \
     inline wl_listener listen_##name = {.notify = listener_##name}
@@ -40,8 +42,7 @@
 
 #define STICKS(a, b) abs((a) - (b)) < 2
 
-#define HYPRATOM(name)                                                                                                                                                             \
-    { name, 0 }
+#define HYPRATOM(name) {name, 0}
 
 #define RASSERT(expr, reason, ...)                                                                                                                                                 \
     if (!(expr)) {                                                                                                                                                                 \
@@ -105,4 +106,9 @@
         namespace ns {                                                                                                                                                             \
             class name;                                                                                                                                                            \
         }                                                                                                                                                                          \
+    }
+
+#define AQUAMARINE_FORWARD(name)                                                                                                                                                   \
+    namespace Aquamarine {                                                                                                                                                         \
+        class name;                                                                                                                                                                \
     }

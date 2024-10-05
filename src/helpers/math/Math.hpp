@@ -4,8 +4,9 @@
 
 // includes box and vector as well
 #include <hyprutils/math/Region.hpp>
+#include <hyprutils/math/Mat3x3.hpp>
 
 using namespace Hyprutils::Math;
 
-eTransform wlTransformToHyprutils(wl_output_transform t);
-void       projectBox(float mat[9], CBox& box, eTransform transform, float rotation, const float projection[9]);
+eTransform          wlTransformToHyprutils(wl_output_transform t);
+wl_output_transform invertTransform(wl_output_transform tr);

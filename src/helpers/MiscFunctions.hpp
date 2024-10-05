@@ -3,10 +3,11 @@
 #include <optional>
 #include <string>
 #include <wayland-server.h>
-#include <wlr/util/box.h>
 #include "math/Math.hpp"
 #include <vector>
 #include <format>
+#include "../SharedDefs.hpp"
+#include "../macros.hpp"
 
 struct SCallstackFrameInfo {
     void*       adr = nullptr;
@@ -14,7 +15,7 @@ struct SCallstackFrameInfo {
 };
 
 struct SWorkspaceIDName {
-    int         id = -1;
+    WORKSPACEID id = WORKSPACE_INVALID;
     std::string name;
 };
 
@@ -33,7 +34,6 @@ int64_t                          getPPIDof(int64_t pid);
 int64_t                          configStringToInt(const std::string&);
 Vector2D                         configStringToVector2D(const std::string&);
 std::optional<float>             getPlusMinusKeywordResult(std::string in, float relative);
-void                             matrixProjection(float mat[9], int w, int h, wl_output_transform tr);
 double                           normalizeAngleRad(double ang);
 std::vector<SCallstackFrameInfo> getBacktrace();
 void                             throwError(const std::string& err);

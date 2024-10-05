@@ -5,8 +5,6 @@
 #include "core/Compositor.hpp"
 #include "core/Output.hpp"
 
-#define LOGM PROTO::sessionLock->protoLog
-
 CSessionLockSurface::CSessionLockSurface(SP<CExtSessionLockSurfaceV1> resource_, SP<CWLSurfaceResource> surface_, CMonitor* pMonitor_, WP<CSessionLock> owner_) :
     resource(resource_), sessionLock(owner_), pSurface(surface_), pMonitor(pMonitor_) {
     if (!resource->resource())
@@ -24,7 +22,7 @@ CSessionLockSurface::CSessionLockSurface(SP<CExtSessionLockSurfaceV1> resource_,
     resource->setAckConfigure([this](CExtSessionLockSurfaceV1* r, uint32_t serial) { ackdConfigure = true; });
 
     listeners.surfaceCommit = pSurface->events.commit.registerListener([this](std::any d) {
-        if (!pSurface->current.buffer) {
+        if (!pSurface->current.texture) {
             LOGM(ERR, "SessionLock attached a null buffer");
             resource->error(EXT_SESSION_LOCK_SURFACE_V1_ERROR_NULL_BUFFER, "Null buffer attached");
             return;
@@ -177,13 +175,6 @@ void CSessionLockProtocol::onLock(CExtSessionLockManagerV1* pMgr, uint32_t id) {
         return;
     }
 
-    if (m_vLocks.size() > 1) {
-        LOGM(ERR, "Tried to lock a locked session");
-        RESOURCE->inert = true;
-        RESOURCE->resource->sendFinished();
-        return;
-    }
-
     events.newLock.emit(RESOURCE);
 
     locked = true;
@@ -196,7 +187,7 @@ void CSessionLockProtocol::onGetLockSurface(CExtSessionLockV1* lock, uint32_t id
     auto             PMONITOR = CWLOutputResource::fromResource(output)->monitor.get();
 
     SP<CSessionLock> sessionLock;
-    for (auto& l : m_vLocks) {
+    for (auto const& l : m_vLocks) {
         if (l->resource.get() == lock) {
             sessionLock = l;
             break;

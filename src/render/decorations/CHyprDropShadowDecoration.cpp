@@ -66,7 +66,7 @@ void CHyprDropShadowDecoration::damageEntire() {
         shadowRegion.subtract(CRegion(surfaceBox));
     }
 
-    for (auto& m : g_pCompositor->m_vMonitors) {
+    for (auto const& m : g_pCompositor->m_vMonitors) {
         if (!g_pHyprRenderer->shouldRenderWindow(PWINDOW, m.get())) {
             const CRegion monitorRegion({m->vecPosition, m->vecSize});
             shadowRegion.subtract(monitorRegion);
@@ -96,13 +96,10 @@ void CHyprDropShadowDecoration::draw(CMonitor* pMonitor, float a) {
     if (PWINDOW->m_cRealShadowColor.value() == CColor(0, 0, 0, 0))
         return; // don't draw invisible shadows
 
-    if (!PWINDOW->m_sSpecialRenderData.decorate)
+    if (!PWINDOW->m_sWindowData.decorate.valueOrDefault())
         return;
 
-    if (!PWINDOW->m_sSpecialRenderData.shadow)
-        return;
-
-    if (PWINDOW->m_sAdditionalConfigData.forceNoShadow)
+    if (PWINDOW->m_sWindowData.noShadow.valueOrDefault())
         return;
 
     static auto PSHADOWS            = CConfigValue<Hyprlang::INT>("decoration:drop_shadow");

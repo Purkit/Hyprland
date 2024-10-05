@@ -70,7 +70,7 @@ void CAnimationManager::tick() {
 
     std::vector<CBaseAnimatedVariable*> animationEndedVars;
 
-    for (auto& av : m_vActiveAnimatedVariables) {
+    for (auto const& av : m_vActiveAnimatedVariables) {
 
         if (av->m_eDamagePolicy == AVARDAMAGE_SHADOW && !*PSHADOWSENABLED) {
             av->warp(false);
@@ -102,7 +102,7 @@ void CAnimationManager::tick() {
             PMONITOR = g_pCompositor->getMonitorFromID(PWINDOW->m_iMonitorID);
             if (!PMONITOR)
                 continue;
-            animationsDisabled = animationsDisabled || PWINDOW->m_sAdditionalConfigData.forceNoAnims;
+            animationsDisabled = PWINDOW->m_sWindowData.noAnim.valueOr(animationsDisabled);
         } else if (PWORKSPACE) {
             PMONITOR = g_pCompositor->getMonitorFromID(PWORKSPACE->m_iMonitorID);
             if (!PMONITOR)
@@ -113,7 +113,7 @@ void CAnimationManager::tick() {
                 g_pHyprRenderer->damageMonitor(PMONITOR);
 
             // TODO: just make this into a damn callback already vax...
-            for (auto& w : g_pCompositor->m_vWindows) {
+            for (auto const& w : g_pCompositor->m_vWindows) {
                 if (!w->m_bIsMapped || w->isHidden() || w->m_pWorkspace != PWORKSPACE)
                     continue;
 
@@ -131,7 +131,7 @@ void CAnimationManager::tick() {
             }
 
             // damage any workspace window that is on any monitor
-            for (auto& w : g_pCompositor->m_vWindows) {
+            for (auto const& w : g_pCompositor->m_vWindows) {
                 if (!validMapped(w) || w->m_pWorkspace != PWORKSPACE || w->m_bPinned)
                     continue;
 
@@ -194,7 +194,7 @@ void CAnimationManager::tick() {
             default: UNREACHABLE();
         }
         // set size and pos if valid, but only if damage policy entire (dont if border for example)
-        if (validMapped(PWINDOW) && av->m_eDamagePolicy == AVARDAMAGE_ENTIRE && PWINDOW->m_iX11Type != 2)
+        if (validMapped(PWINDOW) && av->m_eDamagePolicy == AVARDAMAGE_ENTIRE && !PWINDOW->isX11OverrideRedirect())
             g_pXWaylandManager->setWindowSize(PWINDOW, PWINDOW->m_vRealSize.goal());
 
         // check if we did not finish animating. If so, trigger onAnimationEnd.
@@ -214,7 +214,7 @@ void CAnimationManager::tick() {
                     PWINDOW->updateWindowDecos();
                     g_pHyprRenderer->damageWindow(PWINDOW);
                 } else if (PWORKSPACE) {
-                    for (auto& w : g_pCompositor->m_vWindows) {
+                    for (auto const& w : g_pCompositor->m_vWindows) {
                         if (!validMapped(w) || w->m_pWorkspace != PWORKSPACE)
                             continue;
 
@@ -259,11 +259,11 @@ void CAnimationManager::tick() {
 
         // manually schedule a frame
         if (PMONITOR)
-            g_pCompositor->scheduleFrameForMonitor(PMONITOR);
+            g_pCompositor->scheduleFrameForMonitor(PMONITOR, Aquamarine::IOutput::AQ_SCHEDULE_CURSOR_SHAPE);
     }
 
     // do it here, because if this alters the animation vars deque we would be in trouble above.
-    for (auto& ave : animationEndedVars) {
+    for (auto const& ave : animationEndedVars) {
         ave->onAnimationEnd();
     }
 }
@@ -293,7 +293,7 @@ bool CAnimationManager::deltazero(const CColor& a, const CColor& b) {
 }
 
 bool CAnimationManager::bezierExists(const std::string& bezier) {
-    for (auto& [bc, bz] : m_mBezierCurves) {
+    for (auto const& [bc, bz] : m_mBezierCurves) {
         if (bc == bezier)
             return true;
     }
@@ -407,18 +407,19 @@ void CAnimationManager::onWindowPostCreateClose(PHLWINDOW pWindow, bool close) {
     if (!pWindow->m_vRealPosition.m_pConfig->pValues->internalEnabled)
         return;
 
-    if (pWindow->m_sAdditionalConfigData.animationStyle != "") {
+    if (pWindow->m_sWindowData.animationStyle.hasValue()) {
+        const auto STYLE = pWindow->m_sWindowData.animationStyle.value();
         // the window has config'd special anim
-        if (pWindow->m_sAdditionalConfigData.animationStyle.starts_with("slide")) {
-            CVarList animList2(pWindow->m_sAdditionalConfigData.animationStyle, 0, 's');
+        if (STYLE.starts_with("slide")) {
+            CVarList animList2(STYLE, 0, 's');
             animationSlide(pWindow, animList2[1], close);
         } else {
             // anim popin, fallback
 
             float minPerc = 0.f;
-            if (pWindow->m_sAdditionalConfigData.animationStyle.find("%") != std::string::npos) {
+            if (STYLE.find("%") != std::string::npos) {
                 try {
-                    auto percstr = pWindow->m_sAdditionalConfigData.animationStyle.substr(pWindow->m_sAdditionalConfigData.animationStyle.find_last_of(' '));
+                    auto percstr = STYLE.substr(STYLE.find_last_of(' '));
                     minPerc      = std::stoi(percstr.substr(0, percstr.length() - 1));
                 } catch (std::exception& e) {
                     ; // oops
@@ -470,7 +471,7 @@ std::string CAnimationManager::styleValidInConfigVar(const std::string& config, 
         }
 
         return "unknown style";
-    } else if (config == "workspaces" || config == "specialWorkspace") {
+    } else if (config.starts_with("workspaces") || config.starts_with("specialWorkspace")) {
         if (style == "slide" || style == "slidevert" || style == "fade")
             return "";
         else if (style.starts_with("slidefade")) {

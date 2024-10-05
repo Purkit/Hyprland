@@ -172,6 +172,9 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
             std::cerr << "\n" << Colors::RED << "✖" << Colors::RESET << " Could not check out revision " << rev << ". shell returned:\n" << ret << "\n";
             return false;
         }
+        ret = execAndGet("git -C " + m_szWorkingPluginDirectory + " submodule update --init");
+        if (m_bVerbose)
+            std::cout << Colors::BLUE << "[v] " << Colors::RESET << "git submodule update --init returned: " << ret << "\n";
     }
 
     progress.m_iSteps = 1;
@@ -201,9 +204,9 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
 
     progress.m_iSteps = 2;
     progress.printMessageAbove(std::string{Colors::GREEN} + "✔" + Colors::RESET + " parsed manifest, found " + std::to_string(pManifest->m_vPlugins.size()) + " plugins:");
-    for (auto& pl : pManifest->m_vPlugins) {
+    for (auto const& pl : pManifest->m_vPlugins) {
         std::string message = std::string{Colors::RESET} + " → " + pl.name + " by ";
-        for (auto& a : pl.authors) {
+        for (auto const& a : pl.authors) {
             message += a + ", ";
         }
         if (pl.authors.size() > 0) {
@@ -219,13 +222,19 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
 
         progress.printMessageAbove(std::string{Colors::RESET} + " → Manifest has " + std::to_string(pManifest->m_sRepository.commitPins.size()) + " pins, checking");
 
-        for (auto& [hl, plugin] : pManifest->m_sRepository.commitPins) {
+        for (auto const& [hl, plugin] : pManifest->m_sRepository.commitPins) {
             if (hl != HLVER.hash)
                 continue;
 
             progress.printMessageAbove(std::string{Colors::GREEN} + "✔" + Colors::RESET + " commit pin " + plugin + " matched hl, resetting");
 
             execAndGet("cd " + m_szWorkingPluginDirectory + " && git reset --hard --recurse-submodules " + plugin);
+
+            ret = execAndGet("git -C " + m_szWorkingPluginDirectory + " submodule update --init");
+            if (m_bVerbose)
+                std::cout << Colors::BLUE << "[v] " << Colors::RESET << "git submodule update --init returned: " << ret << "\n";
+
+            break;
         }
     }
 
@@ -255,7 +264,7 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
 
         progress.printMessageAbove(std::string{Colors::RESET} + " → Building " + p.name);
 
-        for (auto& bs : p.buildSteps) {
+        for (auto const& bs : p.buildSteps) {
             std::string cmd = std::format("cd {} && PKG_CONFIG_PATH=\"{}/share/pkgconfig\" {}", m_szWorkingPluginDirectory, DataState::getHeadersPath(), bs);
             out += " -> " + cmd + "\n" + execAndGet(cmd) + "\n";
         }
@@ -290,7 +299,7 @@ bool CPluginManager::addNewPluginRepo(const std::string& url, const std::string&
     repo.url  = url;
     repo.rev  = rev;
     repo.hash = repohash;
-    for (auto& p : pManifest->m_vPlugins) {
+    for (auto const& p : pManifest->m_vPlugins) {
         repo.plugins.push_back(SPlugin{p.name, m_szWorkingPluginDirectory + "/" + p.output, false, p.failed});
     }
     DataState::addNewPluginRepo(repo);
@@ -356,7 +365,7 @@ eHeadersErrors CPluginManager::headersValid() {
         else
             headers = "";
 
-        if (PATH.ends_with("protocols") || PATH.ends_with("wlroots-hyprland"))
+        if (PATH.ends_with("protocols"))
             continue;
 
         verHeader = trim(PATH.substr(2)) + "/hyprland/src/version.h";
@@ -455,12 +464,22 @@ bool CPluginManager::updateHeaders(bool force) {
     progress.m_szCurrentMessage = "Checking out sources";
     progress.print();
 
-    ret = execAndGet("cd " + WORKINGDIR + " && git checkout " + HLVER.branch + " 2>&1");
+    if (m_bVerbose)
+        progress.printMessageAbove(std::string{Colors::BLUE} + "[v] " + Colors::RESET + "will run: " + "cd " + WORKINGDIR + " && git checkout " + HLVER.hash + " 2>&1");
+
+    ret = execAndGet("cd " + WORKINGDIR + " && git checkout " + HLVER.hash + " 2>&1");
+
+    if (ret.contains("fatal: unable to read tree")) {
+        std::cerr << "\n"
+                  << Colors::RED << "✖" << Colors::RESET
+                  << " Could not checkout the running Hyprland commit. If you are on -git, try updating.\nYou can also try re-running hyprpm update with --no-shallow.\n";
+        return false;
+    }
 
     if (m_bVerbose)
         progress.printMessageAbove(std::string{Colors::BLUE} + "[v] " + Colors::RESET + "git returned (co): " + ret);
 
-    ret = execAndGet("cd " + WORKINGDIR + " && git rm subprojects/tracy && git submodule update --init 2>&1 && git reset --hard --recurse-submodules " + HLVER.hash);
+    ret = execAndGet("cd " + WORKINGDIR + " ; git rm subprojects/tracy ; git submodule update --init 2>&1 ; git reset --hard --recurse-submodules " + HLVER.hash);
 
     if (m_bVerbose)
         progress.printMessageAbove(std::string{Colors::BLUE} + "[v] " + Colors::RESET + "git returned (rs): " + ret);
@@ -493,11 +512,6 @@ bool CPluginManager::updateHeaders(bool force) {
         return false;
     }
 
-    // le hack. Wlroots has to generate its build/include
-    ret = execAndGet("cd " + WORKINGDIR + "/subprojects/wlroots-hyprland && meson setup -Drenderers=gles2 -Dexamples=false build");
-    if (m_bVerbose)
-        progress.printMessageAbove(std::string{Colors::BLUE} + "[v] " + Colors::RESET + "meson returned: " + ret);
-
     progress.printMessageAbove(std::string{Colors::GREEN} + "✔" + Colors::RESET + " configured Hyprland");
     progress.m_iSteps           = 4;
     progress.m_szCurrentMessage = "Installing sources";
@@ -525,7 +539,8 @@ bool CPluginManager::updateHeaders(bool force) {
 
         std::cout << "\n";
     } else {
-        progress.printMessageAbove(std::string{Colors::RED} + "✖" + Colors::RESET + " failed to install headers with error code " + std::to_string((int)HEADERSVALID));
+        progress.printMessageAbove(std::string{Colors::RED} + "✖" + Colors::RESET + " failed to install headers with error code " + std::to_string((int)HEADERSVALID) + " (" +
+                                   headerErrorShort(HEADERSVALID) + ")");
         progress.m_iSteps           = 5;
         progress.m_szCurrentMessage = "Failed";
         progress.print();
@@ -564,7 +579,7 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
     const std::string USERNAME = getpwuid(getuid())->pw_name;
     m_szWorkingPluginDirectory = "/tmp/hyprpm/" + USERNAME;
 
-    for (auto& repo : REPOS) {
+    for (auto const& repo : REPOS) {
         bool update = forceUpdateAll;
 
         progress.m_iSteps++;
@@ -643,7 +658,7 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
 
             progress.printMessageAbove(std::string{Colors::RESET} + " → Manifest has " + std::to_string(pManifest->m_sRepository.commitPins.size()) + " pins, checking");
 
-            for (auto& [hl, plugin] : pManifest->m_sRepository.commitPins) {
+            for (auto const& [hl, plugin] : pManifest->m_sRepository.commitPins) {
                 if (hl != HLVER.hash)
                     continue;
 
@@ -664,7 +679,7 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
 
             progress.printMessageAbove(std::string{Colors::RESET} + " → Building " + p.name);
 
-            for (auto& bs : p.buildSteps) {
+            for (auto const& bs : p.buildSteps) {
                 std::string cmd = std::format("cd {} && PKG_CONFIG_PATH=\"{}/share/pkgconfig\" {}", m_szWorkingPluginDirectory, DataState::getHeadersPath(), bs);
                 out += " -> " + cmd + "\n" + execAndGet(cmd) + "\n";
             }
@@ -694,7 +709,7 @@ bool CPluginManager::updatePlugins(bool forceUpdateAll) {
         if (repohash.length() > 0)
             repohash.pop_back();
         newrepo.hash = repohash;
-        for (auto& p : pManifest->m_vPlugins) {
+        for (auto const& p : pManifest->m_vPlugins) {
             const auto OLDPLUGINIT = std::find_if(repo.plugins.begin(), repo.plugins.end(), [&](const auto& other) { return other.name == p.name; });
             newrepo.plugins.push_back(SPlugin{p.name, m_szWorkingPluginDirectory + "/" + p.output, OLDPLUGINIT != repo.plugins.end() ? OLDPLUGINIT->enabled : false});
         }
@@ -779,8 +794,8 @@ ePluginLoadStateReturn CPluginManager::ensurePluginsLoadState() {
     const auto REPOS = DataState::getAllRepositories();
 
     auto       enabled = [REPOS](const std::string& plugin) -> bool {
-        for (auto& r : REPOS) {
-            for (auto& p : r.plugins) {
+        for (auto const& r : REPOS) {
+            for (auto const& p : r.plugins) {
                 if (p.name == plugin && p.enabled)
                     return true;
             }
@@ -790,8 +805,8 @@ ePluginLoadStateReturn CPluginManager::ensurePluginsLoadState() {
     };
 
     auto repoForName = [REPOS](const std::string& name) -> std::string {
-        for (auto& r : REPOS) {
-            for (auto& p : r.plugins) {
+        for (auto const& r : REPOS) {
+            for (auto const& p : r.plugins) {
                 if (p.name == name)
                     return r.name;
             }
@@ -801,7 +816,7 @@ ePluginLoadStateReturn CPluginManager::ensurePluginsLoadState() {
     };
 
     // unload disabled plugins
-    for (auto& p : loadedPlugins) {
+    for (auto const& p : loadedPlugins) {
         if (!enabled(p)) {
             // unload
             loadUnloadPlugin(HYPRPMPATH + repoForName(p) + "/" + p + ".so", false);
@@ -810,8 +825,8 @@ ePluginLoadStateReturn CPluginManager::ensurePluginsLoadState() {
     }
 
     // load enabled plugins
-    for (auto& r : REPOS) {
-        for (auto& p : r.plugins) {
+    for (auto const& r : REPOS) {
+        for (auto const& p : r.plugins) {
             if (!p.enabled)
                 continue;
 
@@ -840,10 +855,10 @@ bool CPluginManager::loadUnloadPlugin(const std::string& path, bool load) {
 void CPluginManager::listAllPlugins() {
     const auto REPOS = DataState::getAllRepositories();
 
-    for (auto& r : REPOS) {
+    for (auto const& r : REPOS) {
         std::cout << std::string{Colors::RESET} + " → Repository " + r.name + ":\n";
 
-        for (auto& p : r.plugins) {
+        for (auto const& p : r.plugins) {
 
             std::cout << std::string{Colors::RESET} + "  │ Plugin " + p.name;
 
@@ -876,10 +891,22 @@ std::string CPluginManager::headerError(const eHeadersErrors err) {
     return std::string{Colors::RED} + "✖" + Colors::RESET + " Unknown header error. Please run hyprpm update to fix those.\n";
 }
 
+std::string CPluginManager::headerErrorShort(const eHeadersErrors err) {
+    switch (err) {
+        case HEADERS_CORRUPTED: return "Headers corrupted";
+        case HEADERS_MISMATCHED: return "Headers version mismatched";
+        case HEADERS_NOT_HYPRLAND: return "Not running on Hyprland";
+        case HEADERS_MISSING: return "Headers missing";
+        case HEADERS_DUPLICATED: return "Headers duplicated";
+        default: break;
+    }
+    return "?";
+}
+
 bool CPluginManager::hasDeps() {
-    std::vector<std::string> deps = {"meson", "cpio", "cmake"};
-    for (auto& d : deps) {
-        if (!execAndGet("which " + d + " 2>&1").contains("/"))
+    std::vector<std::string> deps = {"meson", "cpio", "cmake", "pkg-config"};
+    for (auto const& d : deps) {
+        if (!execAndGet("command -v " + d).contains("/"))
             return false;
     }
 

@@ -28,24 +28,26 @@ void CHyprXWaylandManager::activateSurface(SP<CWLSurfaceResource> pSurface, bool
     if (!pSurface)
         return;
 
-    // TODO:
-    // this cannot be nicely done until we rewrite wlr_surface
-    for (auto& w : g_pCompositor->m_vWindows) {
-        if (!w->m_bIsMapped)
-            continue;
-
-        if (w->m_pWLSurface->resource() != pSurface)
-            continue;
-
-        if (w->m_bIsX11) {
-            if (activate) {
-                w->m_pXWaylandSurface->setMinimized(false);
-                w->m_pXWaylandSurface->restackToTop();
-            }
-            w->m_pXWaylandSurface->activate(activate);
-        } else
-            w->m_pXDGSurface->toplevel->setActive(activate);
+    auto HLSurface = CWLSurface::fromResource(pSurface);
+    if (!HLSurface) {
+        Debug::log(TRACE, "CHyprXWaylandManager::activateSurface on non-desktop surface, ignoring");
+        return;
     }
+
+    const auto PWINDOW = HLSurface->getWindow();
+    if (!PWINDOW) {
+        Debug::log(TRACE, "CHyprXWaylandManager::activateSurface on non-window surface, ignoring");
+        return;
+    }
+
+    if (PWINDOW->m_bIsX11 && PWINDOW->m_pXWaylandSurface) {
+        if (activate) {
+            PWINDOW->m_pXWaylandSurface->setMinimized(false);
+            PWINDOW->m_pXWaylandSurface->restackToTop();
+        }
+        PWINDOW->m_pXWaylandSurface->activate(activate);
+    } else if (!PWINDOW->m_bIsX11 && PWINDOW->m_pXDGSurface)
+        PWINDOW->m_pXDGSurface->toplevel->setActive(activate);
 }
 
 void CHyprXWaylandManager::activateWindow(PHLWINDOW pWindow, bool activate) {
@@ -54,7 +56,7 @@ void CHyprXWaylandManager::activateWindow(PHLWINDOW pWindow, bool activate) {
 
         if (activate) {
             pWindow->m_pXWaylandSurface->setMinimized(false);
-            if (pWindow->m_iX11Type != 2)
+            if (!pWindow->isX11OverrideRedirect())
                 pWindow->m_pXWaylandSurface->restackToTop();
         }
 
@@ -75,14 +77,22 @@ void CHyprXWaylandManager::getGeometryForWindow(PHLWINDOW pWindow, CBox* pbox) {
     if (pWindow->m_bIsX11) {
         const auto SIZEHINTS = pWindow->m_pXWaylandSurface->sizeHints.get();
 
-        if (SIZEHINTS && pWindow->m_iX11Type != 2) {
-            pbox->x      = SIZEHINTS->x;
-            pbox->y      = SIZEHINTS->y;
-            pbox->width  = SIZEHINTS->width;
-            pbox->height = SIZEHINTS->height;
-        } else {
+        if (SIZEHINTS && !pWindow->isX11OverrideRedirect()) {
+            // WM_SIZE_HINTS' x,y,w,h is deprecated it seems.
+            // Source: https://x.org/releases/X11R7.6/doc/xorg-docs/specs/ICCCM/icccm.html#wm_normal_hints_property
+            pbox->x = pWindow->m_pXWaylandSurface->geometry.x;
+            pbox->y = pWindow->m_pXWaylandSurface->geometry.y;
+
+            if ((SIZEHINTS->flags & 0x2 /* ICCCM USSize */) || (SIZEHINTS->flags & 0x8 /* ICCCM PSize */)) {
+                pbox->w = SIZEHINTS->base_width;
+                pbox->h = SIZEHINTS->base_height;
+            } else {
+                pbox->w = pWindow->m_pXWaylandSurface->geometry.w;
+                pbox->h = pWindow->m_pXWaylandSurface->geometry.h;
+            }
+        } else
             *pbox = pWindow->m_pXWaylandSurface->geometry;
-        }
+
     } else if (pWindow->m_pXDGSurface)
         *pbox = pWindow->m_pXDGSurface->current.geometry;
 }
@@ -134,7 +144,7 @@ void CHyprXWaylandManager::setWindowSize(PHLWINDOW pWindow, Vector2D size, bool 
 
 bool CHyprXWaylandManager::shouldBeFloated(PHLWINDOW pWindow, bool pending) {
     if (pWindow->m_bIsX11) {
-        for (auto& a : pWindow->m_pXWaylandSurface->atoms)
+        for (auto const& a : pWindow->m_pXWaylandSurface->atoms)
             if (a == HYPRATOMS["_NET_WM_WINDOW_TYPE_DIALOG"] || a == HYPRATOMS["_NET_WM_WINDOW_TYPE_SPLASH"] || a == HYPRATOMS["_NET_WM_WINDOW_TYPE_TOOLBAR"] ||
                 a == HYPRATOMS["_NET_WM_WINDOW_TYPE_UTILITY"] || a == HYPRATOMS["_NET_WM_WINDOW_TYPE_TOOLTIP"] || a == HYPRATOMS["_NET_WM_WINDOW_TYPE_POPUP_MENU"] ||
                 a == HYPRATOMS["_NET_WM_WINDOW_TYPE_DOCK"] || a == HYPRATOMS["_NET_WM_WINDOW_TYPE_DROPDOWN_MENU"] || a == HYPRATOMS["_NET_WM_WINDOW_TYPE_MENU"] ||
@@ -147,10 +157,8 @@ bool CHyprXWaylandManager::shouldBeFloated(PHLWINDOW pWindow, bool pending) {
                 return true;
             }
 
-        if (pWindow->m_pXWaylandSurface->modal) {
-            pWindow->m_bIsModal = true;
+        if (pWindow->isModal())
             return true;
-        }
 
         if (pWindow->m_pXWaylandSurface->transient)
             return true;
@@ -180,7 +188,7 @@ void CHyprXWaylandManager::checkBorders(PHLWINDOW pWindow) {
     if (!pWindow->m_bIsX11)
         return;
 
-    for (auto& a : pWindow->m_pXWaylandSurface->atoms) {
+    for (auto const& a : pWindow->m_pXWaylandSurface->atoms) {
         if (a == HYPRATOMS["_NET_WM_WINDOW_TYPE_POPUP_MENU"] || a == HYPRATOMS["_NET_WM_WINDOW_TYPE_NOTIFICATION"] || a == HYPRATOMS["_NET_WM_WINDOW_TYPE_DROPDOWN_MENU"] ||
             a == HYPRATOMS["_NET_WM_WINDOW_TYPE_COMBO"] || a == HYPRATOMS["_NET_WM_WINDOW_TYPE_MENU"] || a == HYPRATOMS["_NET_WM_WINDOW_TYPE_SPLASH"] ||
             a == HYPRATOMS["_NET_WM_WINDOW_TYPE_TOOLTIP"]) {
@@ -190,9 +198,8 @@ void CHyprXWaylandManager::checkBorders(PHLWINDOW pWindow) {
         }
     }
 
-    if (pWindow->m_iX11Type == 2) {
+    if (pWindow->isX11OverrideRedirect())
         pWindow->m_bX11DoesntWantBorders = true;
-    }
 }
 
 void CHyprXWaylandManager::setWindowFullscreen(PHLWINDOW pWindow, bool fullscreen) {
@@ -206,7 +213,8 @@ Vector2D CHyprXWaylandManager::getMaxSizeForWindow(PHLWINDOW pWindow) {
     if (!validMapped(pWindow))
         return Vector2D(99999, 99999);
 
-    if ((pWindow->m_bIsX11 && !pWindow->m_pXWaylandSurface->sizeHints) || (!pWindow->m_bIsX11 && !pWindow->m_pXDGSurface->toplevel) || pWindow->m_sAdditionalConfigData.noMaxSize)
+    if ((pWindow->m_bIsX11 && !pWindow->m_pXWaylandSurface->sizeHints) || (!pWindow->m_bIsX11 && !pWindow->m_pXDGSurface->toplevel) ||
+        pWindow->m_sWindowData.noMaxSize.valueOrDefault())
         return Vector2D(99999, 99999);
 
     auto MAXSIZE = pWindow->m_bIsX11 ? Vector2D(pWindow->m_pXWaylandSurface->sizeHints->max_width, pWindow->m_pXWaylandSurface->sizeHints->max_height) :
@@ -241,7 +249,7 @@ Vector2D CHyprXWaylandManager::xwaylandToWaylandCoords(const Vector2D& coord) {
 
     CMonitor*   pMonitor     = nullptr;
     double      bestDistance = __FLT_MAX__;
-    for (auto& m : g_pCompositor->m_vMonitors) {
+    for (auto const& m : g_pCompositor->m_vMonitors) {
         const auto SIZ = *PXWLFORCESCALEZERO ? m->vecTransformedSize : m->vecSize;
 
         double     distance =
